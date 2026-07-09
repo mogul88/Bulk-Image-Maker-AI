@@ -45,16 +45,16 @@ window.addEventListener('DOMContentLoaded', () => {
   bindElements();
   populateSizePresets();
   bindEvents();
+  if (els.providerSelect) els.providerSelect.value = 'pollinations_legacy';
   updateProviderUI();
   applyPreset('etsy_listing');
   updatePromptBoxes();
-  updateConnectUI(false, 'Not connected');
+  updateConnectUI(true, 'Pollinations free mode — no Puter balance needed');
   updateRetryButton();
   clearVisibleError();
   log('Waiting for setup...');
   setTimeout(() => {
-    if (window.puter) log('Puter.js loaded successfully. Puter mode is available if you select it.');
-    else log('Puter.js is still loading. Pollinations mode can still work without Puter.');
+    log('Pollinations free mode is active. No Puter login or balance needed.');
   }, 900);
 });
 
@@ -107,54 +107,41 @@ function populateSizePresets() {
 }
 
 function updateProviderUI() {
-  const provider = els.providerSelect?.value || 'pollinations_legacy';
-  state.activeProvider = provider;
+  if (els.providerSelect) els.providerSelect.value = 'pollinations_legacy';
+  state.activeProvider = 'pollinations_legacy';
 
-  const isPuter = provider === 'puter';
-  const isKeyMode = provider === 'pollinations_key';
-
-  if (els.pollinationsKeyWrap) els.pollinationsKeyWrap.classList.toggle('hidden', !isKeyMode);
-  if (els.connectPuterBtn) els.connectPuterBtn.style.display = isPuter ? 'inline-flex' : 'none';
+  if (els.pollinationsKeyWrap) els.pollinationsKeyWrap.classList.add('hidden');
+  if (els.connectPuterBtn) {
+    els.connectPuterBtn.style.display = 'inline-flex';
+    els.connectPuterBtn.disabled = true;
+    els.connectPuterBtn.classList.add('connected');
+  }
+  if (els.connectText) els.connectText.textContent = 'Free Mode Active';
   if (els.connectStatus) {
-    els.connectStatus.textContent = isPuter
-      ? (state.connected ? els.connectStatus.textContent || 'Connected' : 'Puter mode needs connection')
-      : (isKeyMode ? 'Pollinations key mode' : 'Pollinations free URL mode');
-    els.connectStatus.classList.toggle('connected', !isPuter || state.connected);
+    els.connectStatus.textContent = 'Pollinations free mode — no Puter balance needed';
+    els.connectStatus.classList.add('connected');
   }
-
   if (els.providerHelp) {
-    if (provider === 'pollinations_legacy') {
-      els.providerHelp.textContent = 'No Puter balance needed. This tries the legacy Pollinations image URL. Reference images are not used in this mode.';
-    } else if (provider === 'pollinations_key') {
-      els.providerHelp.textContent = 'Uses Pollinations OpenAI-compatible image endpoint. Paste only a scoped pk_ publishable key, not sk_ secret keys.';
-    } else {
-      els.providerHelp.textContent = 'Uses Puter GPT Image. Best quality/reference image support, but it may need Puter balance.';
-    }
+    els.providerHelp.textContent = 'This free build uses Pollinations only. It will never open the Puter low-balance popup. Reference images are ignored in free mode.';
   }
 
-  const models = isPuter ? PUTER_MODELS : POLLINATIONS_MODELS;
   const current = els.modelSelect.value;
-  els.modelSelect.innerHTML = models.map(item => `<option value="${item.value}">${item.label}</option>`).join('');
-  els.modelSelect.value = models.some(item => item.value === current) ? current : models[0].value;
-
-  if (provider !== 'puter' && els.useReferences?.checked && state.references.length) {
-    log('Note: uploaded reference images are only used in Puter mode. Pollinations mode will use prompts only.');
-  }
+  els.modelSelect.innerHTML = POLLINATIONS_MODELS
+    .filter(item => item.value === 'flux' || item.value === 'turbo')
+    .map(item => `<option value="${item.value}">${item.label}</option>`).join('');
+  els.modelSelect.value = (current === 'turbo') ? 'turbo' : 'flux';
 }
 
 function currentProvider() {
-  return els.providerSelect?.value || 'pollinations_legacy';
+  return 'pollinations_legacy';
 }
 
 function currentProviderName() {
-  const provider = currentProvider();
-  if (provider === 'puter') return 'Puter GPT Image';
-  if (provider === 'pollinations_key') return 'Pollinations API Key';
   return 'Pollinations Free URL';
 }
 
 function bindEvents() {
-  els.connectPuterBtn.addEventListener('click', connectPuter);
+  els.connectPuterBtn.addEventListener('click', () => log('Free mode is already active. No Puter connection needed.'));
 
   els.imageCount.addEventListener('input', () => {
     clearFieldError(els.imageCount);
@@ -243,8 +230,8 @@ function updateConnectUI(isConnected, message) {
   state.connected = isConnected;
   els.connectPuterBtn.classList.toggle('connected', isConnected);
   els.connectStatus.classList.toggle('connected', isConnected);
-  els.connectText.textContent = isConnected ? 'Puter Connected' : 'Connect Puter';
-  els.connectStatus.textContent = message;
+  els.connectText.textContent = 'Free Mode Active';
+  els.connectStatus.textContent = message || 'Pollinations free mode — no Puter balance needed';
 }
 
 function applyPreset(id) {
@@ -547,59 +534,12 @@ function handleTopLevelError(error, title) {
 }
 
 async function ensurePuterReady() {
-  const provider = currentProvider();
-
-  if (provider === 'pollinations_key') {
-    const key = els.pollinationsKey.value.trim();
-    if (!key) throw makeValidationError('Pollinations API key mode selected. Paste your scoped pk_ publishable key or switch provider to Pollinations Free URL.', els.pollinationsKey);
-    if (key.startsWith('sk_')) throw makeValidationError('Do not paste a secret sk_ key in a public frontend app. Use a scoped pk_ publishable key only.', els.pollinationsKey);
-    return;
-  }
-
-  if (provider === 'pollinations_legacy') {
-    return;
-  }
-
-  if (!window.puter || !window.puter.ai || typeof window.puter.ai.txt2img !== 'function') {
-    throw new Error('Puter.js image API is not available. Switch provider to Pollinations Free URL or refresh the page.');
-  }
-
-  if (!state.connected) {
-    try {
-      if (window.puter.auth && typeof window.puter.auth.signIn === 'function') {
-        await connectPuter();
-      }
-    } catch (_) {
-      // The generation call can still surface a proper Puter login/error if auth is required.
-    }
-  }
+  // Pollinations-only build. Never calls Puter, so no low-balance popup.
+  return;
 }
 
 async function generateSingleImage({ prompt, index, width, height }) {
-  const provider = currentProvider();
-
-  try {
-    if (provider === 'puter') {
-      return await generateWithPuter({ prompt, index, width, height });
-    }
-
-    if (provider === 'pollinations_key') {
-      return await generateWithPollinationsKey({ prompt, index, width, height });
-    }
-
-    return await generateWithPollinationsLegacy({ prompt, index, width, height });
-  } catch (error) {
-    const msg = cleanError(error).toLowerCase();
-    const canFallback = provider === 'puter' && els.fallbackPollinations?.checked;
-    const looksLikeBalanceIssue = msg.includes('balance') || msg.includes('credit') || msg.includes('funding') || msg.includes('payment') || msg.includes('quota') || msg.includes('limit');
-
-    if (canFallback && looksLikeBalanceIssue) {
-      log(`Image ${index + 1}: Puter failed due to balance/credit. Trying Pollinations Free URL fallback...`);
-      return await generateWithPollinationsLegacy({ prompt, index, width, height, fallbackFrom: 'puter' });
-    }
-
-    throw error;
-  }
+  return await generateWithPollinationsLegacy({ prompt, index, width, height });
 }
 
 async function generateWithPuter({ prompt, index, width, height }) {
